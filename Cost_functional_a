@@ -1,0 +1,216 @@
+from fenics import *
+from fenics_adjoint import *
+import numpy as np
+import matplotlib.pyplot as plt
+from tqdm import tqdm
+from scipy.special import erfc
+
+
+def optimal_dir_cond_1(T, dt, N, D, a):
+
+    mesh = IntervalMesh(N, 0, 10)
+
+    num_steps = int(T/dt)
+
+    V = FunctionSpace(mesh, "CG", 1)
+
+    C_D = Expression('a*t*(48 - t)', t = 1e-16, a = a, degree = 2) 
+
+    data = Expression("erfc(x[0]/(2*sqrt(D*t)))*(a*t*(48-t))", a = 1, D = 1.3e-4*3600, t = 1e-16, degree=1)
+    d = project(data, V)
+
+    C = TrialFunction(V)
+    v = TestFunction(V)
+
+    # Define initial value
+    C_T = Function(V)
+    C_n = Function(V)
+
+    F = C*v*dx + dt*D*dot(grad(C), grad(v))*dx - C_n*v*dx
+    A, L = lhs(F), rhs(F)
+
+    def GammaL(x, on_boundary):
+        return near(x[0], 0)
+
+    bc = DirichletBC(V, C_D, GammaL)
+
+    b_fun = MeshFunction('size_t', mesh, mesh.topology().dim()-1, 0)
+    b_fun.array()[0] = 1
+
+    J = 0.5*float(dt)*assemble(inner(C_T - data, C_T - data)*dx)
+
+    t = float(0)
+
+    J_values = []
+
+    alpha = 10
+    
+    for n in tqdm(range(num_steps)):
+        # Update time
+        t += dt
+        # Update Dirichlet boundary condition
+        C_D.t = t 
+
+        # Update data function
+        data.t = t
+        d.assign(project(data, V))
+        
+        # Solve PDE
+        solve(A == L, C_T, bc)
+
+        C_n.assign(C_T)
+
+        # Cost functional 
+        J += 0.5*dt*assemble(inner(C_T - data, C_T - data)*dx) #+ alpha/2*dt*assemble(inner(C_D, C_D)*ds(1, subdomain_data = b_fun))
+        print("Step:", n, "t:", t, "J:", J)
+        J_values.append(J)
+
+    return J
+
+# a_values = np.arange(1.05, 1.5, 0.01)
+# J_values = []
+
+# for a in a_values:
+#     print('Solving for', a)
+#     J = optimal_dir_cond_1(1, 0.001, 100, 1.3e-4*3600, a)
+#     J_values.append(J)
+
+# min_J = min(J_values)
+# min_a_index = J_values.index(min_J)
+# optimal_a = a_values[min_a_index]
+
+# print("Optimal value for 'a':", optimal_a)
+
+# plt.plot(a_values, J_values, 'o-')
+# plt.xlabel('Dirichlet condition Constant (a)')
+# plt.ylabel('Cost Functional (J)')
+# plt.title(r'Optimal Dirichlet Condition constant $a$ after 1 hour, $\Delta$t = 36 seconds')
+# plt.grid(True)
+# plt.show()
+
+
+def optimal_dir_cond_2(T, dt, D, T_end):
+
+    mesh = IntervalMesh(100, 0, 10)
+
+    num_steps = int(T/dt)
+
+    V = FunctionSpace(mesh, "CG", 1)
+
+    C_D = Expression('t*(T_end - t)', t = 1e-16, T_end = Constant(T_end), degree = 1) 
+
+    # C_D = DirichletFunction(T_end=T_end, degree=1)
+
+    data = Expression("erfc(x[0]/(2*sqrt(D*t)))*(t*(48-t))", D = 1.3e-4*3600, t = 1e-16, degree=1)
+
+    C = TrialFunction(V)
+    v = TestFunction(V)
+
+    # Define initial value
+    C_T = Function(V)
+    C_n = Function(V)
+
+    F = C*v*dx + dt*D*dot(grad(C), grad(v))*dx - C_n*v*dx
+    A, L = lhs(F), rhs(F)
+
+    def GammaL(x, on_boundary):
+        return near(x[0], 0)
+
+    bc = DirichletBC(V, C_D, GammaL)
+
+    J = 0.5*float(dt)*assemble(inner(C_T - data, C_T - data)*dx)
+
+    t = float(0)
+
+    J_values = []
+    
+    for n in tqdm(range(num_steps)):
+        # Update time
+        t += dt
+        # Update Dirichlet boundary condition
+        C_D.t = t 
+
+        # Update data function
+        data.t = t
+        
+        # Solve PDE
+        solve(A == L, C_T, bc)
+
+        C_n.assign(C_T)
+
+        # Cost functional 
+        J += 0.5*dt*assemble(inner(C_T - data, C_T - data)*dx) 
+        print("Step:", n, "t:", t, "J:", J)
+        J_values.append(J)
+
+    return J
+
+# T_end_values = np.arange(50, 65, 0.1)
+# J_values = []
+
+# for T_end in T_end_values:
+#     print('Solving for', T_end)
+#     J = optimal_dir_cond_2(1, 0.001, 1.3e-4*3600, T_end)
+#     J_values.append(J)
+
+# min_J = min(J_values)
+# min_T_end_index = J_values.index(min_J)
+# optimal_T_end = T_end_values[min_T_end_index]
+
+# print("Optimal value for 'T_end':", optimal_T_end)
+
+# plt.plot(T_end_values, J_values, 'o-')
+# plt.xlabel(r'Dirichlet condition Constant T$_{end}$')
+# plt.ylabel('Cost Functional (J)')
+# plt.title(r' Optimal Dirichlet condition Constant T$_{end}$ after 1 hour, $\Delta$t = 3.6 seconds')
+# plt.grid(True)
+# plt.show()
+
+optimal_a = 1.244
+optimal_T_end = 59.52
+
+time = np.arange(0, 49.3, 0.01)
+
+# Seleziona solo i valori positivi di time
+positive_time = time[time >= 0]
+
+plt.plot(positive_time, 1.50 * positive_time * (40 - positive_time), label='Optimal Dirichlet Condition')
+plt.plot(positive_time, positive_time * (48 - positive_time), label='Original Dirichlet Condition')
+plt.plot(positive_time, optimal_a * positive_time * (48 - positive_time), label='Dirichlet Condition with optimal a')
+plt.plot(positive_time, positive_time * (optimal_T_end - positive_time), label=r'Dirichlet Condition with optimal T$_{end}$')
+plt.legend()
+plt.title('Comparison between original and optimal Dirichlet Condition')
+plt.xlabel('time')
+plt.ylabel('Function Value')
+# plt.grid(True)
+plt.show()
+
+optimal_a = 1.244
+optimal_T_end = 59.52
+
+time = np.arange(0, 59.3, 0.01)
+
+# Calcola i valori della funzione
+function1 = 1.50 * time * (40 - time)
+function2 = time * (48 - time)
+function3 = optimal_a * time * (48 - time)
+function4 = time * (optimal_T_end - time)
+
+# Seleziona solo i valori positivi
+function1 = np.where(function1 > 0, function1, np.nan)
+function2 = np.where(function2 > 0, function2, np.nan)
+function3 = np.where(function3 > 0, function3, np.nan)
+function4 = np.where(function4 > 0, function4, np.nan)
+
+plt.plot(time, function1, label='Optimal Dirichlet Condition')
+plt.plot(time, function2, label='Original Dirichlet Condition')
+plt.plot(time, function3, label='Dirichlet Condition with optimal a')
+plt.plot(time, function4, label=r'Dirichlet Condition with optimal T$_{end}$')
+plt.legend()
+
+plt.legend(fontsize=6)
+plt.title('Comparison between original and optimal Dirichlet Condition')
+plt.xlabel('Time [h]')
+plt.ylabel('Function Value')
+# plt.grid(True)
+plt.show()
